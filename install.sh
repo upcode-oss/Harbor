@@ -19,6 +19,8 @@ WITH_FTP=0
 WITH_OPENVPN=0
 WITH_ZFS=0
 INSTALL_SELECTION_MADE=0
+SKIP_NGINX=0
+NGINX_SELECTION_MADE=0
 UPDATES_ENABLED=0
 UPDATE_PUBLIC_KEY=
 RELEASE_VERSION=
@@ -29,7 +31,6 @@ REINSTALL_BACKUP_DIR=
 CORE_PACKAGES=(
   build-essential gcc g++ make python3 python3-pip python3-venv python3-dev
   libpq-dev libpam-modules libpam-modules-bin libpam-runtime pamtester
-  nginx certbot python3-certbot python3-certbot-nginx
   git lshw openssl gawk coreutils curl jq ca-certificates gnupg sudo whiptail debian-archive-keyring
   nftables fail2ban cron openssh-client openssh-server iproute2 isc-dhcp-client util-linux
   e2fsprogs xfsprogs btrfs-progs dosfstools exfatprogs ntfs-3g parted
@@ -40,7 +41,7 @@ usage() {
 Usage: sudo ./install.sh [OPTIONS]
 
 Without component options, an interactive checklist selects Docker, K3s,
-LXC/LXD, and ZFS. OpenSSH is always installed.
+LXC/LXD, ZFS, and the nginx HTTPS proxy. OpenSSH is always installed.
 
 Profiles:
   --profile core             No optional platform components
@@ -52,6 +53,8 @@ Profiles:
 Individual options:
   --with-docker --with-k3s --with-lxc/--with-lxd --with-zfs
   --with-libvirt --with-postgresql --with-ftp --with-openvpn
+  --skip-nginx               Skip nginx/Certbot installation and HTTPS proxy setup
+  --with-nginx               Enable nginx setup (default; overrides recorded choice)
   --update-public-key PATH   Enable signed updates with this public key
   --disable-updates          Install without the update facility (default)
   --resume                   Rebuild configuration and finish an interrupted install
@@ -108,7 +111,8 @@ select_optional_components() {
 
   ensure_checklist_tool
 
-  local selection component
+  local selection component nginx_default=ON
+  [[ $SKIP_NGINX == 0 ]] || nginx_default=OFF
   if ! selection=$(whiptail \
     --title 'Upcode Harbor Installation' \
     --ok-button 'Continue' \
@@ -120,6 +124,7 @@ select_optional_components() {
     k3s 'K3s Kubernetes' OFF \
     lxc 'LXC/LXD Systemcontainer' OFF \
     zfs 'ZFS Storage' OFF \
+    nginx 'Nginx HTTPS Reverse Proxy' "$nginx_default" \
     3>&1 1>&2 2>&3); then
     printf 'Component selection cancelled.\n' >&2
     return 2
@@ -129,6 +134,7 @@ select_optional_components() {
   WITH_K3S=0
   WITH_LXD=0
   WITH_ZFS=0
+  local selected_nginx=0
   while IFS= read -r component; do
     component=${component//\"/}
     case "$component" in
@@ -136,10 +142,14 @@ select_optional_components() {
       k3s) WITH_K3S=1 ;;
       lxc) WITH_LXD=1 ;;
       zfs) WITH_ZFS=1 ;;
+      nginx) selected_nginx=1 ;;
       '') ;;
       *) printf 'Invalid component returned by checklist: %s\n' "$component" >&2; return 2 ;;
     esac
   done <<<"$selection"
+  if [[ $NGINX_SELECTION_MADE == 0 ]]; then
+    SKIP_NGINX=$((1 - selected_nginx))
+  fi
   INSTALL_SELECTION_MADE=1
 
   printf 'Selected optional components:'
@@ -148,6 +158,7 @@ select_optional_components() {
   if [[ $WITH_K3S == 1 ]]; then printf ' K3s'; selected=1; fi
   if [[ $WITH_LXD == 1 ]]; then printf ' LXC/LXD'; selected=1; fi
   if [[ $WITH_ZFS == 1 ]]; then printf ' ZFS'; selected=1; fi
+  if [[ $SKIP_NGINX == 0 ]]; then printf ' Nginx'; selected=1; fi
   [[ $selected == 1 ]] || printf ' none'
   printf ' (OpenSSH is always included)\n'
 }
@@ -168,15 +179,22 @@ primary_server_ip() {
 
 print_access_information() {
   local server_ip server_name
-  server_ip=$(primary_server_ip)
-  if [[ -n $server_ip ]]; then
-    printf 'Open Upcode Harbor: https://%s/\n' "$server_ip"
+  if [[ $SKIP_NGINX == 1 ]]; then
+    printf 'Nginx setup skipped. Configure your own HTTPS reverse proxy for remote access.\n'
+    printf 'Local upstreams: frontend http://127.0.0.1:9200 and API http://127.0.0.1:9500.\n'
+    printf 'Route /api/ and /ws/ to the API, stripping those prefixes and forwarding WebSocket upgrades.\n'
+    printf 'Proxy configuration template: %s/deploy/nginx/upcode-harbor.conf\n' "$RELEASE_DIR"
   else
-    server_name=$(hostname -f 2>/dev/null || hostname)
-    printf 'Open Upcode Harbor: https://%s/\n' "$server_name"
+    server_ip=$(primary_server_ip)
+    if [[ -n $server_ip ]]; then
+      printf 'Open Upcode Harbor: https://%s/\n' "$server_ip"
+    else
+      server_name=$(hostname -f 2>/dev/null || hostname)
+      printf 'Open Upcode Harbor: https://%s/\n' "$server_name"
+    fi
+    printf 'Ports 9200 and 9500 are internal loopback services; remote access uses nginx on HTTPS port 443.\n'
+    printf 'The browser may require confirmation of the automatically generated certificate.\n'
   fi
-  printf 'Ports 9200 and 9500 are internal loopback services; remote access uses nginx on HTTPS port 443.\n'
-  printf 'The browser may require confirmation of the automatically generated certificate.\n'
   if [[ -n ${SUDO_USER:-} && $SUDO_USER != root ]]; then
     printf 'Login with an existing Linux/PAM account, for example: %s\n' "$SUDO_USER"
   else
@@ -266,6 +284,13 @@ load_recorded_profile() {
   local key value
   while IFS='=' read -r key value; do
     case "$key" in
+      SKIP_NGINX)
+        [[ $value == 0 || $value == 1 ]] || {
+          printf 'Invalid recorded nginx selection.\n' >&2
+          return 2
+        }
+        if [[ $NGINX_SELECTION_MADE == 0 ]]; then SKIP_NGINX=$value; fi
+        ;;
       WITH_DOCKER|WITH_LXD|WITH_LIBVIRT|WITH_K3S|WITH_POSTGRESQL|WITH_FTP|WITH_OPENVPN|WITH_ZFS)
         [[ $value == 0 || $value == 1 ]] || {
           printf 'Invalid recorded install profile value for %s.\n' "$key" >&2
@@ -281,6 +306,8 @@ load_recorded_profile() {
 while (($#)); do
   case "$1" in
     --profile) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; enable_profile "$2"; shift 2 ;;
+    --skip-nginx) SKIP_NGINX=1; NGINX_SELECTION_MADE=1; shift ;;
+    --with-nginx) SKIP_NGINX=0; NGINX_SELECTION_MADE=1; shift ;;
     --with-docker) WITH_DOCKER=1; INSTALL_SELECTION_MADE=1; shift ;;
     --with-lxc|--with-lxd) WITH_LXD=1; INSTALL_SELECTION_MADE=1; shift ;;
     --with-libvirt) WITH_LIBVIRT=1; INSTALL_SELECTION_MADE=1; shift ;;
@@ -430,7 +457,11 @@ step_validate_source() {
 step_install_core_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y "${CORE_PACKAGES[@]}"
+  local core_packages=("${CORE_PACKAGES[@]}")
+  if [[ $SKIP_NGINX == 0 ]]; then
+    core_packages+=(nginx certbot python3-certbot python3-certbot-nginx)
+  fi
+  apt-get install -y "${core_packages[@]}"
   systemctl enable --now ssh.service
 
   if [[ $WITH_ZFS == 1 ]] && ! apt-cache show zfsutils-linux >/dev/null 2>&1; then
@@ -643,6 +674,7 @@ WITH_POSTGRESQL=$WITH_POSTGRESQL
 WITH_FTP=$WITH_FTP
 WITH_OPENVPN=$WITH_OPENVPN
 WITH_ZFS=$WITH_ZFS
+SKIP_NGINX=$SKIP_NGINX
 UPDATES_ENABLED=$UPDATES_ENABLED
 EOF
   chown root:"$SERVICE_USER" /var/lib/upcode-harbor/install-profile
@@ -678,6 +710,10 @@ step_install_systemd_units() {
 }
 
 step_configure_https() {
+  if [[ $SKIP_NGINX == 1 ]]; then
+    printf 'Skipping nginx and local HTTPS certificate setup.\n'
+    return 0
+  fi
   local tls_dir=/etc/upcode-harbor/tls
   local certificate=$tls_dir/server.crt
   local private_key=$tls_dir/server.key

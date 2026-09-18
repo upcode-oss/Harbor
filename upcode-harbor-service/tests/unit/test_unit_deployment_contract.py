@@ -253,3 +253,55 @@ def test_novnc_gitlink_has_an_explicit_official_mapping():
     assert "path = upcode-harbor/public/novnc" in mapping
     assert "url = https://github.com/novnc/noVNC.git" in mapping
     assert (ROOT / "upcode-harbor/public/novnc/vnc.html").is_file()
+
+
+def _installer_function(name):
+    installer = (ROOT / "install.sh").read_text()
+    match = re.search(rf"^{name}\(\) \{{\n.*?^\}}", installer, re.M | re.S)
+    assert match, name
+    return match.group(0)
+
+
+def test_skip_nginx_does_not_run_proxy_or_certificate_commands():
+    script = "set -eu\nSKIP_NGINX=1\nRELEASE_DIR=/test-release\n"
+    for command in ("install", "openssl", "chown", "chmod", "rm", "ln", "nginx", "systemctl"):
+        script += f'{command}() {{ echo "Unexpected command: {command}" >&2; exit 99; }}\n'
+    script += _installer_function("step_configure_https") + "\n"
+    script += _installer_function("print_access_information") + "\n"
+    script += "step_configure_https\nprint_access_information\n"
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    assert "Nginx setup skipped" in result.stdout
+    assert "http://127.0.0.1:9200" in result.stdout
+    assert "Open Upcode Harbor: https://" not in result.stdout
+
+
+def test_nginx_packages_are_optional_but_ssh_remains_enabled():
+    installer = (ROOT / "install.sh").read_text()
+    packages = re.search(r"^CORE_PACKAGES=\(.*?^\)", installer, re.M | re.S).group(0)
+    for skip in (0, 1):
+        script = f"set -eu\nSKIP_NGINX={skip}\n" + packages + "\n"
+        for component in ("ZFS", "LXD", "LIBVIRT", "POSTGRESQL", "FTP", "OPENVPN"):
+            script += f"WITH_{component}=0\n"
+        script += 'apt-get() { printf "%s\\n" "$@"; }\n'
+        script += 'systemctl() { printf "%s\\n" "$@"; }\n'
+        script += _installer_function("step_install_core_packages") + "\nstep_install_core_packages\n"
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+        arguments = result.stdout.splitlines()
+        for package in ("nginx", "certbot", "python3-certbot", "python3-certbot-nginx"):
+            assert (package in arguments) == (skip == 0)
+        assert "openssh-server" in arguments
+        assert "ssh.service" in arguments
+
+
+def test_resume_restores_nginx_choice_and_respects_explicit_override(tmp_path):
+    profile = tmp_path / "install-profile"
+    function = _installer_function("load_recorded_profile").replace(
+        "/var/lib/upcode-harbor/install-profile", str(profile)
+    )
+    for recorded, explicit, expected in (("1", 0, "1"), ("1", 1, "0"), ("0", 0, "0")):
+        profile.write_text(f"SKIP_NGINX={recorded}\nWITH_DOCKER=1\n")
+        script = f"set -eu\nSKIP_NGINX=0\nNGINX_SELECTION_MADE={explicit}\n"
+        script += 'stat() { echo root:640; }\n' + function
+        script += '\nload_recorded_profile\nprintf "%s" "$SKIP_NGINX"\n'
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+        assert result.stdout == expected

@@ -44,6 +44,23 @@ one-time browser confirmation. Ports `9200` (frontend) and `9500` (API) bind to
 loopback intentionally and are only nginx upstreams; they are not remote access
 URLs. nginx accepts remote HTTPS connections on port `443`.
 
+To use your own reverse proxy, deselect **Nginx HTTPS Reverse Proxy** in the
+checklist or skip its installation and configuration explicitly:
+
+```bash
+sudo ./install.sh --profile core --skip-nginx
+```
+
+This skips nginx, Certbot, and the local web TLS certificate setup. Frontend
+and API remain bound to `127.0.0.1` on ports `9200` and `9500`. Configure an
+HTTPS proxy on the same host: route `/` to the frontend, and `/api/` and `/ws/`
+to the API with those prefixes stripped. Forward WebSocket upgrade headers.
+See `deploy/nginx/upcode-harbor.conf` for the complete routing template.
+
+`--resume` remembers this choice; `--resume --skip-nginx` also skips a previously
+failed nginx step. Use `--with-nginx` to override the recorded choice when nginx
+and Certbot are installed. Profiles include nginx by default.
+
 Upcode Harbor never creates application login users or assigns their passwords. Sign
 in with an existing Linux username and its PAM password. The installer creates
 the dedicated `/etc/pam.d/upcode-harbor` service policy, which delegates password and
@@ -76,7 +93,7 @@ sudo ./install.sh --resume
 ```
 
 The installer generates all node-local key material automatically: the nginx
-TLS certificate and private key, the application encryption key, the session
+TLS certificate and private key (unless `--skip-nginx` is selected), the application encryption key, the session
 signing secret, and the cluster CA/certificate/private key. A release public key
 cannot be generated locally because it must match the external update signer;
 signed updates therefore remain disabled unless `--update-public-key` is used.
