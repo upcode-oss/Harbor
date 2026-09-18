@@ -145,11 +145,11 @@ export default function LoginPage() {
                 <img
                   src={apiUrl("/settings/customization/logo/file")}
                   alt="Logo"
-                  className="h-24 w-auto object-contain"
+                  className="h-48 w-auto max-w-full object-contain"
                 />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src="/logo.png" alt="Upcode Harbor Logo" className="h-24 w-auto object-contain" />
+                <img src="/logo.png" alt="Upcode Harbor Logo" className="h-48 w-auto max-w-full object-contain" />
               )}
             </div>
             <h1 className="text-4xl font-bold mb-4">{customization.banner_title}</h1>

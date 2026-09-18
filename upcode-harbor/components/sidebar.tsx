@@ -379,7 +379,7 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
   return (
     <div className="w-64 upcode-harbor-sidebar flex flex-col">
       <div className="p-6 border-b border-sidebar-border/30">
-        <div className="flex items-center space-x-3 mb-2">
+        <div className="flex items-center justify-center mb-4">
           <img
             src={
               hasCustomLogo
@@ -389,7 +389,7 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
                 : "/logo.png"
             }
             alt="Upcode Harbor Logo"
-            className="h-16 w-auto object-contain"
+            className="h-32 w-auto max-w-full object-contain"
           />
         </div>
         <div className="space-y-1">
