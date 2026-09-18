@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -252,7 +253,9 @@ def test_novnc_gitlink_has_an_explicit_official_mapping():
     mapping = (ROOT / ".gitmodules").read_text()
     assert "path = upcode-harbor/public/novnc" in mapping
     assert "url = https://github.com/novnc/noVNC.git" in mapping
-    assert (ROOT / "upcode-harbor/public/novnc/vnc.html").is_file()
+    installer = (ROOT / "install.sh").read_text()
+    assert "submodule update --init --checkout" in installer
+    assert "--remote" not in installer
 
 
 def _installer_function(name):
@@ -305,3 +308,67 @@ def test_resume_restores_nginx_choice_and_respects_explicit_override(tmp_path):
         script += '\nload_recorded_profile\nprintf "%s" "$SKIP_NGINX"\n'
         result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
         assert result.stdout == expected
+
+
+
+def test_installer_downloads_pinned_novnc_and_preserves_local_changes(tmp_path):
+    env = dict(os.environ, GIT_ALLOW_PROTOCOL="file", GIT_CONFIG_COUNT="1",
+               GIT_CONFIG_KEY_0=f"url.{tmp_path}/novnc-origin.insteadOf",
+               GIT_CONFIG_VALUE_0="https://github.com/novnc/noVNC.git")
+
+    def git(directory, *args):
+        return subprocess.check_output(
+            ["git", "-C", str(directory), *args], env=env, text=True,
+            stderr=subprocess.PIPE,
+        ).strip()
+
+    origin = tmp_path / "novnc-origin"
+    origin.mkdir()
+    git(origin, "init")
+    git(origin, "config", "user.name", "Installer test")
+    git(origin, "config", "user.email", "installer@example.invalid")
+    (origin / "vnc.html").write_text("pinned version")
+    git(origin, "add", ".")
+    git(origin, "commit", "-m", "Pinned noVNC")
+    pinned = git(origin, "rev-parse", "HEAD")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    git(source, "init")
+    git(source, "config", "user.name", "Installer test")
+    git(source, "config", "user.email", "installer@example.invalid")
+    git(source, "submodule", "add", "https://github.com/novnc/noVNC.git",
+        "upcode-harbor/public/novnc")
+    (source / "upcode-harbor/package-lock.json").write_text("{}")
+    (source / "upcode-harbor-service").mkdir()
+    (source / "upcode-harbor-service/requirements.lock").write_text("")
+    git(source, "add", ".")
+    git(source, "commit", "-m", "Pin submodule")
+    (origin / "vnc.html").write_text("new upstream version")
+    git(origin, "commit", "-am", "New upstream")
+
+    checkout = tmp_path / "checkout"
+    git(tmp_path, "clone", str(source), str(checkout))
+    novnc = checkout / "upcode-harbor/public/novnc"
+    assert not (novnc / "vnc.html").exists()
+    script = 'set -eu\nSCRIPT_DIR=$1\n' + _installer_function("step_validate_source")
+    script += "\nstep_validate_source\n"
+
+    def validate():
+        return subprocess.run(["bash", "-c", script, "installer-test", str(checkout)],
+                              env=env, capture_output=True, text=True)
+
+    result = validate()
+    assert result.returncode == 0, result.stderr
+    assert git(novnc, "rev-parse", "HEAD") == pinned
+    assert (novnc / "vnc.html").read_text() == "pinned version"
+    assert validate().returncode == 0
+
+    git(novnc, "checkout", "origin/HEAD")
+    assert git(novnc, "rev-parse", "HEAD") != pinned
+    assert validate().returncode == 0
+    assert git(novnc, "rev-parse", "HEAD") == pinned
+
+    (novnc / "vnc.html").write_text("local changes")
+    assert validate().returncode != 0
+    assert (novnc / "vnc.html").read_text() == "local changes"

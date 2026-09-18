@@ -436,22 +436,41 @@ verify_optional_sha256() {
 }
 
 step_validate_source() {
+  local submodule=upcode-harbor/public/novnc
+  local novnc_dir="$SCRIPT_DIR/$submodule"
+  local expected actual
   [[ -f $SCRIPT_DIR/.gitmodules ]]
   grep -Fq 'path = upcode-harbor/public/novnc' "$SCRIPT_DIR/.gitmodules"
   grep -Fq 'url = https://github.com/novnc/noVNC.git' "$SCRIPT_DIR/.gitmodules"
-  [[ -f $SCRIPT_DIR/upcode-harbor/public/novnc/vnc.html ]]
-  if git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    expected=$(git -C "$SCRIPT_DIR" ls-files -s upcode-harbor/public/novnc | awk '{print $2}')
-    actual=$(git -C "$SCRIPT_DIR/upcode-harbor/public/novnc" rev-parse HEAD)
-    [[ -n $expected && $expected == "$actual" ]] || {
-      printf 'The noVNC submodule is missing or checked out at the wrong commit.\n' >&2
-      return 1
-    }
-    git -C "$SCRIPT_DIR/upcode-harbor/public/novnc" diff --quiet
-    git -C "$SCRIPT_DIR/upcode-harbor/public/novnc" diff --cached --quiet
-  fi
   [[ -f $SCRIPT_DIR/upcode-harbor/package-lock.json ]]
   [[ -f $SCRIPT_DIR/upcode-harbor-service/requirements.lock ]]
+
+  if ! command -v git >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y git ca-certificates
+  fi
+  # Trust only these checkout paths when invoked through sudo.
+  local git_command=(git -c "safe.directory=$SCRIPT_DIR" -c "safe.directory=$novnc_dir")
+  if "${git_command[@]}" -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    expected=$("${git_command[@]}" -C "$SCRIPT_DIR" ls-files -s -- "$submodule" | awk '$1 == "160000" {print $2}')
+    [[ $expected =~ ^[0-9a-f]{40,64}$ ]] || {
+      printf 'The source checkout does not pin a noVNC submodule commit.\n' >&2
+      return 1
+    }
+    printf 'Preparing noVNC at pinned commit %s...\n' "$expected"
+    "${git_command[@]}" -C "$SCRIPT_DIR" \
+      -c "submodule.$submodule.url=https://github.com/novnc/noVNC.git" \
+      submodule update --init --checkout -- "$submodule"
+    actual=$("${git_command[@]}" -C "$novnc_dir" rev-parse HEAD)
+    [[ $expected == "$actual" ]]
+    "${git_command[@]}" -C "$novnc_dir" diff --quiet
+    "${git_command[@]}" -C "$novnc_dir" diff --cached --quiet
+  fi
+  [[ -f $novnc_dir/vnc.html ]] || {
+    printf 'noVNC is missing. Run the installer from a Git checkout so it can download the pinned submodule automatically.\n' >&2
+    return 1
+  }
 }
 
 step_install_core_packages() {

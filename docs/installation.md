@@ -21,10 +21,15 @@ from 0.6.x or older. Back up the existing host separately and install 0.7.0
 from a clean checkout or on a clean host.
 
 ```bash
-git clone --recurse-submodules https://github.com/upcode-at/upcode-harbor.git
+git clone https://github.com/upcode-at/upcode-harbor.git
 cd upcode-harbor
 sudo ./install.sh
 ```
+
+The installer automatically downloads the noVNC submodule at the commit pinned
+by your Harbor checkout. No manual submodule initialization is required. Existing
+tracked noVNC changes are not overwritten forcibly; use a clean checkout if
+validation fails. Source archives must already include noVNC.
 
 The `install.sh` script handles:
 

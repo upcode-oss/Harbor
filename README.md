@@ -79,7 +79,7 @@ then runs the frontend ESLint and production build gates.
 
 ```bash
 # Clone repository
-git clone --recurse-submodules https://github.com/upcode-at/upcode-harbor.git
+git clone https://github.com/upcode-at/upcode-harbor.git
 cd upcode-harbor
 
 # Interactive selection (no keys required)
