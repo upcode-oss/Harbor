@@ -372,3 +372,58 @@ def test_installer_downloads_pinned_novnc_and_preserves_local_changes(tmp_path):
     (novnc / "vnc.html").write_text("local changes")
     assert validate().returncode != 0
     assert (novnc / "vnc.html").read_text() == "local changes"
+
+
+def test_apt_candidate_check_rejects_missing_or_uninstallable_packages():
+    for policy, expected in (("", 1), ("  Candidate: (none)", 1),
+                             ("  Candidate: 2.3.9-0+deb13u1", 0)):
+        # Supply policy output through an argument without shell interpolation.
+        script = 'policy_text=$1\napt-cache() { printf "%s\\n" "$policy_text"; }\n'
+        script += _installer_function("apt_has_candidate") + "\napt_has_candidate zfsutils-linux\n"
+        result = subprocess.run(["bash", "-c", script, "test", policy], capture_output=True)
+        assert result.returncode == expected
+
+
+def test_zfs_repository_repair_requires_an_installable_candidate(tmp_path):
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    os_release = tmp_path / "os-release"
+    os_release.write_text("ID=debian\nVERSION_CODENAME=trixie\n")
+    function = _installer_function("step_install_core_packages").replace(
+        "/etc/apt/sources.list.d", str(sources)
+    ).replace("/etc/os-release", str(os_release))
+    for repaired in (0, 1):
+        script = '''set -eu
+SKIP_NGINX=1
+WITH_ZFS=1
+WITH_LXD=0
+WITH_LIBVIRT=0
+WITH_POSTGRESQL=0
+WITH_FTP=0
+WITH_OPENVPN=0
+CORE_PACKAGES=(core-test-package)
+updates=0
+apt-get() {
+  if [[ $1 == update ]]; then updates=$((updates + 1)); fi
+  printf '%s\\n' "$*"
+}
+apt-cache() {
+  if [[ $updates -ge 2 && $repaired == 1 ]]; then
+    echo '  Candidate: 2.3.9'
+  else
+    echo '  Candidate: (none)'
+  fi
+}
+install() { :; }
+systemctl() { :; }
+'''
+        script += f"repaired={repaired}\n" + _installer_function("apt_has_candidate") + "\n"
+        script += function + "\nstep_install_core_packages\n"
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        assert (result.returncode == 0) == bool(repaired), result.stderr
+        assert "Components: contrib" in (sources / "upcode-harbor-zfs.sources").read_text()
+        if repaired:
+            assert "install -y zfsutils-linux zfs-dkms linux-headers-" in result.stdout
+        else:
+            assert "No installable zfsutils-linux candidate" in result.stderr
+            assert "install -y zfsutils-linux" not in result.stdout

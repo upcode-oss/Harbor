@@ -141,6 +141,8 @@ installer fetches and validates its official checksum when `KUBECTL_SHA256` is
 not supplied. When ZFS is selected and unavailable from the configured APT
 sources, the installer adds a Debian-signed `contrib` source for the current
 Debian release because Debian distributes `zfsutils-linux` in that component.
+It checks for an installable APT candidate and installs `zfs-dkms` with the
+running kernel’s headers so the ZFS kernel module can be built.
 
 ---
 

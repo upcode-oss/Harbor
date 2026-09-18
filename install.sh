@@ -473,6 +473,13 @@ step_validate_source() {
   }
 }
 
+apt_has_candidate() {
+  local policy candidate
+  policy=$(LC_ALL=C apt-cache policy "$1") || return 1
+  candidate=$(awk '$1 == "Candidate:" {print $2; exit}' <<<"$policy")
+  [[ -n $candidate && $candidate != '(none)' ]]
+}
+
 step_install_core_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
@@ -483,7 +490,7 @@ step_install_core_packages() {
   apt-get install -y "${core_packages[@]}"
   systemctl enable --now ssh.service
 
-  if [[ $WITH_ZFS == 1 ]] && ! apt-cache show zfsutils-linux >/dev/null 2>&1; then
+  if [[ $WITH_ZFS == 1 ]] && ! apt_has_candidate zfsutils-linux; then
     # zfsutils-linux is shipped in Debian's contrib component. Minimal Debian
     # images commonly enable only main, so add a narrowly scoped, Debian-signed
     # source instead of silently omitting ZFS from the full profile.
@@ -503,8 +510,9 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
     chmod 0644 /etc/apt/sources.list.d/upcode-harbor-zfs.sources
     apt-get update
-    apt-cache show zfsutils-linux >/dev/null 2>&1 || {
-      printf 'ZFS packages remain unavailable after enabling Debian contrib.\n' >&2
+    apt_has_candidate zfsutils-linux || {
+      printf 'No installable zfsutils-linux candidate after enabling Debian contrib. Check APT sources, package pinning, and architecture.\n' >&2
+      LC_ALL=C apt-cache policy zfsutils-linux >&2
       return 1
     }
   fi
@@ -515,7 +523,7 @@ EOF
   [[ $WITH_POSTGRESQL == 0 ]] || packages+=(postgresql)
   [[ $WITH_FTP == 0 ]] || packages+=(vsftpd ftp)
   [[ $WITH_OPENVPN == 0 ]] || packages+=(openvpn)
-  [[ $WITH_ZFS == 0 ]] || packages+=(zfsutils-linux linux-headers-"$(uname -r)" dkms)
+  [[ $WITH_ZFS == 0 ]] || packages+=(zfsutils-linux zfs-dkms linux-headers-"$(uname -r)" dkms)
   ((${#packages[@]} == 0)) || apt-get install -y "${packages[@]}"
 }
 
