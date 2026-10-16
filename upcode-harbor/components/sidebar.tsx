@@ -378,27 +378,23 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
 
   return (
     <div className="w-64 upcode-harbor-sidebar flex flex-col">
-      <div className="p-6 border-b border-sidebar-border/30">
-        <div className="flex items-center justify-center mb-4">
+      <div className="flex min-h-[8.5rem] shrink-0 flex-col items-center justify-center gap-2 border-b border-sidebar-border p-4">
+        <div className="flex h-20 w-48 max-w-full shrink-0 items-center justify-center">
           <img
             src={
               hasCustomLogo
                 ? `${apiUrl("/settings/customization/logo/file")}?t=${logoTimestamp}`
-                : theme === "dark"
+                : resolvedTheme === "dark"
                 ? "/logo_light.png"
                 : "/logo.png"
             }
             alt="Upcode Harbor Logo"
-            className="h-32 w-auto max-w-full object-contain"
+            className="h-full w-full object-contain"
           />
         </div>
-        <div className="space-y-1">
-          <div className="flex items-center space-x-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <p className="text-sm text-muted-foreground font-medium">{hostname || "Local Server"}</p>
-          </div>
-          <p className="text-xs text-muted-foreground/60 font-mono pl-4">v0.7.0</p>
-        </div>
+        <p className="max-w-full truncate text-center text-xs text-muted-foreground" title={`${hostname || "Local Server"} · v0.7.0`}>
+          <span>{hostname || "Local Server"}</span><span aria-hidden="true"> · </span><span>v0.7.0</span>
+        </p>
       </div>
       <nav className="flex-1 p-4 space-y-6">
         {categories.map((category) => {
