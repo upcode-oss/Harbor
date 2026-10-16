@@ -6,6 +6,9 @@ import "./globals.css"
 export const metadata = {
   title: "Upcode Harbor",
   description: "Comprehensive server management dashboard",
+  icons: {
+    icon: { url: "/favicon.png", type: "image/png", sizes: "256x256" },
+  },
 }
 
 export default function RootLayout({
